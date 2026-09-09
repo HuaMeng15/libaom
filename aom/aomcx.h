@@ -1527,10 +1527,30 @@ enum aome_enc_control_id {
    */
   AV1E_SET_BITRATE_ONE_PASS_CBR = 163,
 
+  /*!\brief Install a synchronous per-tile bitrate callback.
+   *
+   * The callback is invoked immediately before each tile is encoded and
+   * returns the current target bitrate in kilobits per second. A non-positive
+   * return value keeps the frame-level target. The encoder converts the
+   * returned target to a tile-specific quantizer using its native rate model.
+   * Tile callbacks require no row or tile multithreading.
+   */
+  AV1E_SET_TILE_RATE_CONTROL_CALLBACK = 164,
+
   // Any new encoder control IDs should be added above.
   // Maximum allowed encoder control ID is 229.
   // No encoder control ID should be added below.
 };
+
+/*!\brief Callback used for synchronous per-tile rate control. */
+typedef int (*aom_tile_rate_control_callback_fn_t)(
+    void *user_priv, int tile_index, int tile_count, int frame_qindex);
+
+/*!\brief Per-tile rate-control callback and opaque application state. */
+typedef struct aom_tile_rate_control_callback {
+  aom_tile_rate_control_callback_fn_t callback;
+  void *user_priv;
+} aom_tile_rate_control_callback_t;
 
 /*!\brief aom 1-D scaling mode
  *
@@ -2171,6 +2191,10 @@ AOM_CTRL_USE_TYPE(AV1E_GET_LUMA_CDEF_STRENGTH, int *)
 
 AOM_CTRL_USE_TYPE(AV1E_SET_BITRATE_ONE_PASS_CBR, unsigned int)
 #define AOM_CTRL_AV1E_SET_BITRATE_ONE_PASS_CBR
+
+AOM_CTRL_USE_TYPE(AV1E_SET_TILE_RATE_CONTROL_CALLBACK,
+                  aom_tile_rate_control_callback_t *)
+#define AOM_CTRL_AV1E_SET_TILE_RATE_CONTROL_CALLBACK
 
 /*!\endcond */
 /*! @} - end defgroup aom_encoder */

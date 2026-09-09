@@ -3579,6 +3579,9 @@ typedef struct AV1_COMP {
    * fast encoding pass in av1_determine_sc_tools_with_encoding().
    */
   int palette_pixel_num;
+
+  /* Experimental synchronous tile-level rate control. */
+  aom_tile_rate_control_callback_t tile_rate_control;
 } AV1_COMP;
 
 /*!

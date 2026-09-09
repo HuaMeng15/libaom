@@ -1433,10 +1433,47 @@ static AOM_INLINE void encode_tiles(AV1_COMP *cpi) {
   av1_init_tile_data(cpi);
   av1_alloc_mb_data(cpi, mb);
 
+  const int tile_count = tile_cols * tile_rows;
+  const int tile_rc_enabled =
+      cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS;
+  if (tile_rc_enabled) {
+    const int mi_cols = cm->mi_params.mi_cols;
+    for (int tile_index = 0; tile_index < tile_count; ++tile_index) {
+      const TileInfo *const tile_info = &cpi->tile_data[tile_index].tile_info;
+      for (int mi_row = tile_info->mi_row_start;
+           mi_row < tile_info->mi_row_end; ++mi_row) {
+        memset(cpi->enc_seg.map + mi_row * mi_cols + tile_info->mi_col_start,
+               tile_index,
+               tile_info->mi_col_end - tile_info->mi_col_start);
+      }
+    }
+  }
+
   for (tile_row = 0; tile_row < tile_rows; ++tile_row) {
     for (tile_col = 0; tile_col < tile_cols; ++tile_col) {
+      const int tile_index = tile_row * tile_cols + tile_col;
       TileDataEnc *const this_tile =
-          &cpi->tile_data[tile_row * cm->tiles.cols + tile_col];
+          &cpi->tile_data[tile_index];
+      if (tile_rc_enabled) {
+        const int frame_qindex = cm->quant_params.base_qindex;
+        const int target_kbps = cpi->tile_rate_control.callback(
+            cpi->tile_rate_control.user_priv, tile_index, tile_count,
+            frame_qindex);
+        int tile_qindex = frame_qindex;
+        if (target_kbps > 0 && cpi->oxcf.rc_cfg.target_bandwidth > 0) {
+          const int64_t target_bits = AOMMAX(
+              1, (int64_t)cpi->rc.this_frame_target * target_kbps * 1000 /
+                     cpi->oxcf.rc_cfg.target_bandwidth);
+          tile_qindex = av1_rc_regulate_q(
+              cpi, (int)AOMMIN(target_bits, INT_MAX),
+              cpi->oxcf.rc_cfg.best_allowed_q,
+              cpi->oxcf.rc_cfg.worst_allowed_q, cm->width, cm->height);
+        }
+        av1_set_segdata(&cm->seg, tile_index, SEG_LVL_ALT_Q,
+                        tile_qindex - frame_qindex);
+        av1_calculate_segdata(&cm->seg);
+        segfeatures_copy(&cm->cur_frame->seg, &cm->seg);
+      }
       cpi->td.intrabc_used = 0;
       cpi->td.deltaq_used = 0;
       cpi->td.abs_sum_level = 0;
@@ -1710,6 +1747,18 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   const DELTAQ_MODE deltaq_mode = oxcf->q_cfg.deltaq_mode;
   int i;
 
+  const int tile_count = cm->tiles.cols * cm->tiles.rows;
+  if (cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS) {
+    av1_enable_segmentation(&cm->seg);
+    av1_clearall_segfeatures(&cm->seg);
+    for (int tile_index = 0; tile_index < tile_count; ++tile_index) {
+      av1_enable_segfeature(&cm->seg, tile_index, SEG_LVL_ALT_Q);
+      av1_set_segdata(&cm->seg, tile_index, SEG_LVL_ALT_Q, 0);
+    }
+    av1_calculate_segdata(&cm->seg);
+    segfeatures_copy(&cm->cur_frame->seg, &cm->seg);
+  }
+
   if (!cpi->sf.rt_sf.use_nonrd_pick_mode) {
     mi_params->setup_mi(mi_params);
   }
@@ -1959,7 +2008,15 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   mt_info->pack_bs_mt_enabled = AOMMIN(mt_info->num_mod_workers[MOD_PACK_BS],
                                        cm->tiles.cols * cm->tiles.rows) > 1;
 
-  if (oxcf->row_mt && (mt_info->num_workers > 1)) {
+  if (cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS) {
+    const int use_nonrd_mode = cpi->sf.rt_sf.use_nonrd_pick_mode;
+    td->rt_pc_root = use_nonrd_mode
+                         ? av1_alloc_pc_tree_node(cm->seq_params->sb_size)
+                         : NULL;
+    encode_tiles(cpi);
+    av1_free_pc_tree_recursive(td->rt_pc_root, av1_num_planes(cm), 0, 0,
+                               cpi->sf.part_sf.partition_search_type);
+  } else if (oxcf->row_mt && (mt_info->num_workers > 1)) {
     mt_info->row_mt_enabled = 1;
     enc_row_mt->sync_read_ptr = av1_row_mt_sync_read;
     enc_row_mt->sync_write_ptr = av1_row_mt_sync_write;
