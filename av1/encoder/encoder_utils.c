@@ -1191,15 +1191,17 @@ void av1_finalize_encoded_frame(AV1_COMP *const cpi) {
       cm->film_grain_params.random_seed = 7391;
   }
 
-  // Initialise all tiles' contexts from the global frame context
-  for (int tile_col = 0; tile_col < cm->tiles.cols; tile_col++) {
-    for (int tile_row = 0; tile_row < cm->tiles.rows; tile_row++) {
-      const int tile_idx = tile_row * cm->tiles.cols + tile_col;
-      cpi->tile_data[tile_idx].tctx = *cm->fc;
+  if (cpi->tile_output.callback == NULL) {
+    // Initialise all tiles' contexts from the global frame context.
+    for (int tile_col = 0; tile_col < cm->tiles.cols; tile_col++) {
+      for (int tile_row = 0; tile_row < cm->tiles.rows; tile_row++) {
+        const int tile_idx = tile_row * cm->tiles.cols + tile_col;
+        cpi->tile_data[tile_idx].tctx = *cm->fc;
+      }
     }
   }
 
-  if (!frame_is_intra_only(cm))
+  if (cpi->tile_output.callback == NULL && !frame_is_intra_only(cm))
     fix_interp_filter(&cm->features.interp_filter, cpi->td.counts);
 }
 

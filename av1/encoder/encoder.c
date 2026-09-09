@@ -1694,6 +1694,7 @@ void av1_remove_compressor(AV1_COMP *cpi) {
     aom_free(cm->error);
   }
   aom_free(cpi->td.tctx);
+  aom_free(cpi->streaming_frame_buffer);
   MultiThreadInfo *const mt_info = &cpi->mt_info;
 #if CONFIG_MULTITHREAD
   pthread_mutex_t *const enc_row_mt_mutex_ = mt_info->enc_row_mt.mutex_;

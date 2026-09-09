@@ -3585,6 +3585,10 @@ typedef struct AV1_COMP {
 
   /* Experimental synchronous completed tile-group output. */
   aom_tile_output_callback_t tile_output;
+
+  uint8_t *streaming_frame_buffer;
+  size_t streaming_frame_size;
+  size_t streaming_frame_capacity;
 } AV1_COMP;
 
 /*!

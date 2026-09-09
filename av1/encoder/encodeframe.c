@@ -1751,6 +1751,7 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   int i;
 
   const int tile_count = cm->tiles.cols * cm->tiles.rows;
+  const int streaming_tiles = cpi->tile_output.callback != NULL;
   if (cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS) {
     av1_enable_segmentation(&cm->seg);
     av1_clearall_segfeatures(&cm->seg);
@@ -1766,6 +1767,7 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
     }
     av1_calculate_segdata(&cm->seg);
     segfeatures_copy(&cm->cur_frame->seg, &cm->seg);
+    cm->seg.temporal_update = 0;
   }
 
   if (!cpi->sf.rt_sf.use_nonrd_pick_mode) {
@@ -2001,6 +2003,8 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
 
   cm->current_frame.skip_mode_info.skip_mode_flag =
       check_skip_mode_enabled(cpi);
+  if (streaming_tiles)
+    cm->current_frame.skip_mode_info.skip_mode_flag = 0;
 
   // Initialization of skip mode cost depends on the value of
   // 'skip_mode_flag'. This initialization happens in the function
@@ -2016,6 +2020,8 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   mt_info->row_mt_enabled = 0;
   mt_info->pack_bs_mt_enabled = AOMMIN(mt_info->num_mod_workers[MOD_PACK_BS],
                                        cm->tiles.cols * cm->tiles.rows) > 1;
+
+  if (streaming_tiles) features->tx_mode = TX_MODE_SELECT;
 
   if (cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS) {
     const int use_nonrd_mode = cpi->sf.rt_sf.use_nonrd_pick_mode;
@@ -2066,7 +2072,9 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   const TX_SIZE_SEARCH_METHOD tx_search_type =
       cpi->winner_mode_params.tx_size_search_methods[eval_type];
   assert(oxcf->txfm_cfg.enable_tx64 || tx_search_type != USE_LARGESTALL);
-  features->tx_mode = select_tx_mode(cm, tx_search_type);
+  features->tx_mode = streaming_tiles
+                          ? TX_MODE_SELECT
+                          : select_tx_mode(cm, tx_search_type);
 
   // Retain the frame level probability update conditions for parallel frames.
   // These conditions will be consumed during postencode stage to update the
@@ -2147,9 +2155,13 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   }
 
   if (cm->seg.enabled) {
-    cm->seg.temporal_update = 1;
-    if (rdc->seg_tmp_pred_cost[0] < rdc->seg_tmp_pred_cost[1])
+    if (streaming_tiles) {
       cm->seg.temporal_update = 0;
+    } else {
+      cm->seg.temporal_update = 1;
+      if (rdc->seg_tmp_pred_cost[0] < rdc->seg_tmp_pred_cost[1])
+        cm->seg.temporal_update = 0;
+    }
   }
 
   if (cpi->sf.inter_sf.prune_obmc_prob_thresh > 0 &&
@@ -2313,6 +2325,7 @@ void av1_encode_frame(AV1_COMP *cpi) {
   FeatureFlags *const features = &cm->features;
   RD_COUNTS *const rdc = &cpi->td.rd_counts;
   const AV1EncoderConfig *const oxcf = &cpi->oxcf;
+  const int streaming_tiles = cpi->tile_output.callback != NULL;
   // Indicates whether or not to use a default reduced set for ext-tx
   // rather than the potential full set of 16 transforms
   features->reduced_tx_set_used = oxcf->txfm_cfg.reduced_tx_type_set;
@@ -2379,7 +2392,8 @@ void av1_encode_frame(AV1_COMP *cpi) {
 
     encode_frame_internal(cpi);
 
-    if (current_frame->reference_mode == REFERENCE_MODE_SELECT) {
+    if (!streaming_tiles &&
+        current_frame->reference_mode == REFERENCE_MODE_SELECT) {
       // Use a flag that includes 4x4 blocks
       if (rdc->compound_ref_used_flag == 0) {
         current_frame->reference_mode = SINGLE_REFERENCE;
@@ -2400,7 +2414,7 @@ void av1_encode_frame(AV1_COMP *cpi) {
       skip_mode_info->skip_mode_flag = 0;
 
     if (!cm->tiles.large_scale) {
-      if (features->tx_mode == TX_MODE_SELECT &&
+      if (!streaming_tiles && features->tx_mode == TX_MODE_SELECT &&
           cpi->td.mb.txfm_search_info.txb_split_count == 0)
         features->tx_mode = TX_MODE_LARGEST;
     }
