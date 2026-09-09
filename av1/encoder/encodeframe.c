@@ -48,6 +48,7 @@
 #include "av1/encoder/aq_complexity.h"
 #include "av1/encoder/aq_cyclicrefresh.h"
 #include "av1/encoder/aq_variance.h"
+#include "av1/encoder/bitstream.h"
 #include "av1/encoder/global_motion_facade.h"
 #include "av1/encoder/encodeframe.h"
 #include "av1/encoder/encodeframe_utils.h"
@@ -1436,19 +1437,6 @@ static AOM_INLINE void encode_tiles(AV1_COMP *cpi) {
   const int tile_count = tile_cols * tile_rows;
   const int tile_rc_enabled =
       cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS;
-  if (tile_rc_enabled) {
-    const int mi_cols = cm->mi_params.mi_cols;
-    for (int tile_index = 0; tile_index < tile_count; ++tile_index) {
-      const TileInfo *const tile_info = &cpi->tile_data[tile_index].tile_info;
-      for (int mi_row = tile_info->mi_row_start;
-           mi_row < tile_info->mi_row_end; ++mi_row) {
-        memset(cpi->enc_seg.map + mi_row * mi_cols + tile_info->mi_col_start,
-               tile_index,
-               tile_info->mi_col_end - tile_info->mi_col_start);
-      }
-    }
-  }
-
   for (tile_row = 0; tile_row < tile_rows; ++tile_row) {
     for (tile_col = 0; tile_col < tile_cols; ++tile_col) {
       const int tile_index = tile_row * tile_cols + tile_col;
@@ -1469,10 +1457,24 @@ static AOM_INLINE void encode_tiles(AV1_COMP *cpi) {
               cpi->oxcf.rc_cfg.best_allowed_q,
               cpi->oxcf.rc_cfg.worst_allowed_q, cm->width, cm->height);
         }
-        av1_set_segdata(&cm->seg, tile_index, SEG_LVL_ALT_Q,
-                        tile_qindex - frame_qindex);
-        av1_calculate_segdata(&cm->seg);
-        segfeatures_copy(&cm->cur_frame->seg, &cm->seg);
+        int segment_id = 0;
+        int nearest_distance = INT_MAX;
+        for (int candidate = 0; candidate < MAX_SEGMENTS; ++candidate) {
+          const int candidate_q = frame_qindex +
+              cm->seg.feature_data[candidate][SEG_LVL_ALT_Q];
+          const int distance = abs(candidate_q - tile_qindex);
+          if (distance < nearest_distance) {
+            segment_id = candidate;
+            nearest_distance = distance;
+          }
+        }
+        const TileInfo *const tile_info = &this_tile->tile_info;
+        const int mi_cols = cm->mi_params.mi_cols;
+        for (int mi_row = tile_info->mi_row_start;
+             mi_row < tile_info->mi_row_end; ++mi_row) {
+          memset(cpi->enc_seg.map + mi_row * mi_cols + tile_info->mi_col_start,
+                 segment_id, tile_info->mi_col_end - tile_info->mi_col_start);
+        }
       }
       cpi->td.intrabc_used = 0;
       cpi->td.deltaq_used = 0;
@@ -1484,6 +1486,7 @@ static AOM_INLINE void encode_tiles(AV1_COMP *cpi) {
       av1_init_rtc_counters(&cpi->td.mb);
       cpi->td.mb.palette_pixels = 0;
       av1_encode_tile(cpi, &cpi->td, tile_row, tile_col);
+      av1_output_streaming_tile(cpi, tile_row, tile_col);
       if (!frame_is_intra_only(&cpi->common))
         av1_accumulate_rtc_counters(cpi, &cpi->td.mb);
       cpi->palette_pixel_num += cpi->td.mb.palette_pixels;
@@ -1751,9 +1754,15 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
   if (cpi->tile_rate_control.callback != NULL && tile_count <= MAX_SEGMENTS) {
     av1_enable_segmentation(&cm->seg);
     av1_clearall_segfeatures(&cm->seg);
-    for (int tile_index = 0; tile_index < tile_count; ++tile_index) {
-      av1_enable_segfeature(&cm->seg, tile_index, SEG_LVL_ALT_Q);
-      av1_set_segdata(&cm->seg, tile_index, SEG_LVL_ALT_Q, 0);
+    const int best_q = cpi->oxcf.rc_cfg.best_allowed_q;
+    const int worst_q = cpi->oxcf.rc_cfg.worst_allowed_q;
+    const int frame_q = cm->quant_params.base_qindex;
+    for (int segment_id = 0; segment_id < MAX_SEGMENTS; ++segment_id) {
+      const int palette_q = best_q +
+          (worst_q - best_q) * segment_id / (MAX_SEGMENTS - 1);
+      av1_enable_segfeature(&cm->seg, segment_id, SEG_LVL_ALT_Q);
+      av1_set_segdata(&cm->seg, segment_id, SEG_LVL_ALT_Q,
+                      palette_q - frame_q);
     }
     av1_calculate_segdata(&cm->seg);
     segfeatures_copy(&cm->cur_frame->seg, &cm->seg);
