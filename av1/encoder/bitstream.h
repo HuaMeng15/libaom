@@ -113,6 +113,11 @@ void av1_write_last_tile_info(
 int av1_pack_bitstream(struct AV1_COMP *const cpi, uint8_t *dst, size_t *size,
                        int *const largest_tile_id);
 
+// Pack one completed tile group and synchronously deliver it to the
+// application callback. Tile zero also carries the frame headers.
+void av1_output_streaming_tile(struct AV1_COMP *const cpi, int tile_row,
+                               int tile_col);
+
 void av1_write_tx_type(const AV1_COMMON *const cm, const MACROBLOCKD *xd,
                        TX_TYPE tx_type, TX_SIZE tx_size, aom_writer *w);
 

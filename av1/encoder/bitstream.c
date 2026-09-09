@@ -4099,6 +4099,94 @@ static uint32_t write_tiles_in_tg_obus(AV1_COMP *const cpi, uint8_t *const dst,
                                fh_info, largest_tile_id);
 }
 
+void av1_output_streaming_tile(AV1_COMP *const cpi, int tile_row,
+                               int tile_col) {
+  if (cpi->tile_output.callback == NULL) return;
+  AV1_COMMON *const cm = &cpi->common;
+  const int tile_count = cm->tiles.rows * cm->tiles.cols;
+  const int tile_index = tile_row * cm->tiles.cols + tile_col;
+  if (cpi->num_tg != tile_count) return;
+
+  const size_t capacity =
+      (size_t)cm->width * cm->height * 3 + 65536;
+  uint8_t *const buffer = aom_malloc(capacity);
+  if (buffer == NULL) return;
+  uint8_t *data = buffer;
+  const uint8_t obu_extension_header =
+      cm->temporal_layer_id << 5 | cm->spatial_layer_id << 3;
+
+  if (tile_index == 0) {
+    cpi->frame_header_count = 0;
+    set_postproc_filter_default_params(cm);
+    if (cm->current_frame.frame_type == INTRA_ONLY_FRAME ||
+        cm->current_frame.frame_type == KEY_FRAME) {
+      const uint32_t obu_header_size = av1_write_obu_header(
+          &cpi->ppi->level_params, &cpi->frame_header_count,
+          OBU_SEQUENCE_HEADER, 0, data);
+      const uint32_t payload_size =
+          av1_write_sequence_header_obu(cm->seq_params,
+                                        data + obu_header_size);
+      const size_t length_size =
+          av1_obu_memmove(obu_header_size, payload_size, data);
+      if (av1_write_uleb_obu_size(obu_header_size, payload_size, data) !=
+          AOM_CODEC_OK) {
+        aom_free(buffer);
+        return;
+      }
+      data += obu_header_size + payload_size + length_size;
+    }
+
+    struct aom_write_bit_buffer saved_wb = { NULL, 0 };
+    const uint32_t obu_header_size = av1_write_obu_header(
+        &cpi->ppi->level_params, &cpi->frame_header_count, OBU_FRAME_HEADER,
+        obu_extension_header, data);
+    const uint32_t payload_size = write_frame_header_obu(
+        cpi, &cpi->td.mb.e_mbd, &saved_wb, data + obu_header_size, 1);
+    const size_t length_size =
+        av1_obu_memmove(obu_header_size, payload_size, data);
+    if (av1_write_uleb_obu_size(obu_header_size, payload_size, data) !=
+        AOM_CODEC_OK) {
+      aom_free(buffer);
+      return;
+    }
+    data += obu_header_size + payload_size + length_size;
+  }
+
+  uint8_t *const tg_start = data;
+  const uint32_t obu_header_size = av1_write_obu_header(
+      &cpi->ppi->level_params, &cpi->frame_header_count, OBU_TILE_GROUP,
+      obu_extension_header, tg_start);
+  const uint32_t tile_header_size = write_tile_group_header(
+      tg_start + obu_header_size, tile_index, tile_index,
+      cm->tiles.log2_rows + cm->tiles.log2_cols, 1);
+  uint32_t tg_size = obu_header_size + tile_header_size;
+  TileDataEnc *const tile = &cpi->tile_data[tile_index];
+  const FRAME_CONTEXT saved_tctx = tile->tctx;
+  cpi->td.mb.e_mbd.tile_ctx = &tile->tctx;
+  PackBSParams params = { 0 };
+  params.dst = tg_start;
+  params.total_size = &tg_size;
+  params.tile_row = tile_row;
+  params.tile_col = tile_col;
+  params.is_last_tile_in_tg = 1;
+  av1_pack_tile_info(cpi, &cpi->td, &params);
+  tg_size += (uint32_t)params.buf.size;
+  tile->tctx = saved_tctx;
+
+  const uint32_t payload_size = tg_size - obu_header_size;
+  const size_t length_size =
+      av1_obu_memmove(obu_header_size, payload_size, tg_start);
+  if (av1_write_uleb_obu_size(obu_header_size, payload_size, tg_start) !=
+      AOM_CODEC_OK) {
+    aom_free(buffer);
+    return;
+  }
+  data += tg_size + length_size;
+  cpi->tile_output.callback(cpi->tile_output.user_priv, tile_index,
+                            tile_count, buffer, (size_t)(data - buffer));
+  aom_free(buffer);
+}
+
 static size_t av1_write_metadata_obu(const aom_metadata_t *metadata,
                                      uint8_t *const dst) {
   size_t coded_metadata_size = 0;
