@@ -1537,6 +1537,14 @@ enum aome_enc_control_id {
    */
   AV1E_SET_TILE_RATE_CONTROL_CALLBACK = 164,
 
+  /*!rief Install a synchronous callback for completed tile-group OBUs.
+   *
+   * The first callback fragment also contains sequence and frame headers.
+   * Fragments remain valid until the callback returns and concatenate into
+   * one standards-compliant AV1 frame.
+   */
+  AV1E_SET_TILE_OUTPUT_CALLBACK = 165,
+
   // Any new encoder control IDs should be added above.
   // Maximum allowed encoder control ID is 229.
   // No encoder control ID should be added below.
@@ -1551,6 +1559,17 @@ typedef struct aom_tile_rate_control_callback {
   aom_tile_rate_control_callback_fn_t callback;
   void *user_priv;
 } aom_tile_rate_control_callback_t;
+
+/*!rief Callback used to deliver a completed tile-group fragment. */
+typedef void (*aom_tile_output_callback_fn_t)(
+    void *user_priv, int tile_index, int tile_count, const uint8_t *data,
+    size_t size);
+
+/*!rief Per-tile output callback and opaque application state. */
+typedef struct aom_tile_output_callback {
+  aom_tile_output_callback_fn_t callback;
+  void *user_priv;
+} aom_tile_output_callback_t;
 
 /*!\brief aom 1-D scaling mode
  *
@@ -2195,6 +2214,10 @@ AOM_CTRL_USE_TYPE(AV1E_SET_BITRATE_ONE_PASS_CBR, unsigned int)
 AOM_CTRL_USE_TYPE(AV1E_SET_TILE_RATE_CONTROL_CALLBACK,
                   aom_tile_rate_control_callback_t *)
 #define AOM_CTRL_AV1E_SET_TILE_RATE_CONTROL_CALLBACK
+
+AOM_CTRL_USE_TYPE(AV1E_SET_TILE_OUTPUT_CALLBACK,
+                  aom_tile_output_callback_t *)
+#define AOM_CTRL_AV1E_SET_TILE_OUTPUT_CALLBACK
 
 /*!\endcond */
 /*! @} - end defgroup aom_encoder */

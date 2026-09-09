@@ -2586,6 +2586,22 @@ static aom_codec_err_t ctrl_set_tile_rate_control_callback(
   return AOM_CODEC_OK;
 }
 
+static aom_codec_err_t ctrl_set_tile_output_callback(
+    aom_codec_alg_priv_t *ctx, va_list args) {
+  aom_tile_output_callback_t *const callback =
+      CAST(AV1E_SET_TILE_OUTPUT_CALLBACK, args);
+  AV1_COMP *const cpi = ctx->ppi->cpi;
+  if (!is_one_pass_rt_params(cpi) || cpi->oxcf.rc_cfg.mode != AOM_CBR) {
+    return AOM_CODEC_INVALID_PARAM;
+  }
+  if (callback == NULL) {
+    memset(&cpi->tile_output, 0, sizeof(cpi->tile_output));
+  } else {
+    cpi->tile_output = *callback;
+  }
+  return AOM_CODEC_OK;
+}
+
 #if !CONFIG_REALTIME_ONLY
 aom_codec_err_t av1_create_stats_buffer(FIRSTPASS_STATS **frame_stats_buffer,
                                         STATS_BUFFER_CTX *stats_buf_context,
@@ -4366,6 +4382,7 @@ static aom_codec_ctrl_fn_map_t encoder_ctrl_maps[] = {
   { AV1E_SET_BITRATE_ONE_PASS_CBR, ctrl_set_bitrate_one_pass_cbr },
   { AV1E_SET_TILE_RATE_CONTROL_CALLBACK,
     ctrl_set_tile_rate_control_callback },
+  { AV1E_SET_TILE_OUTPUT_CALLBACK, ctrl_set_tile_output_callback },
 
   // Getters
   { AOME_GET_LAST_QUANTIZER, ctrl_get_quantizer },

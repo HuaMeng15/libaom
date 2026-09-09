@@ -3582,6 +3582,9 @@ typedef struct AV1_COMP {
 
   /* Experimental synchronous tile-level rate control. */
   aom_tile_rate_control_callback_t tile_rate_control;
+
+  /* Experimental synchronous completed tile-group output. */
+  aom_tile_output_callback_t tile_output;
 } AV1_COMP;
 
 /*!
